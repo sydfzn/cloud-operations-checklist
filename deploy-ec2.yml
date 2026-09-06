@@ -1,0 +1,114 @@
+name: Build and deploy to EC2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Package release
+        run: |
+          tar -czf release.tgz \
+            dist \
+            package.json \
+            pnpm-lock.yaml \
+            database/sqlserver \
+            server/_core/entra.ts \
+            MICROSOFT_INTEGRATION.md
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-operations-release-${{ github.sha }}
+          path: release.tgz
+          retention-days: 14
+
+  deploy:
+    needs: validate-and-build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cloud-operations-release-${{ github.sha }}
+
+      - name: Configure SSH
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Copy release to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key release.tgz "$EC2_USER@$EC2_HOST:/tmp/cloud-operations-release-${GITHUB_SHA}.tgz"
+
+      - name: Activate release on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$EC2_USER@$EC2_HOST" \
+            "RELEASE_ID=$GITHUB_SHA APP_DIR=$EC2_APP_DIR bash -s" <<'REMOTE'
+          set -euo pipefail
+          : "${APP_DIR:?EC2_APP_DIR is required}"
+          RELEASE_DIR="$APP_DIR/releases/$RELEASE_ID"
+          sudo mkdir -p "$RELEASE_DIR"
+          sudo tar -xzf "/tmp/cloud-operations-release-$RELEASE_ID.tgz" -C "$RELEASE_DIR"
+          sudo chown -R "$USER:$USER" "$RELEASE_DIR"
+          cd "$RELEASE_DIR"
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+          pnpm install --prod --frozen-lockfile
+          ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
+          rm -f "/tmp/cloud-operations-release-$RELEASE_ID.tgz"
+          sudo systemctl restart cloud-operations-checklist
+          sudo systemctl --no-pager --full status cloud-operations-checklist
+          REMOTE
+
+      - name: Remove temporary SSH material
+        if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/known_hosts
