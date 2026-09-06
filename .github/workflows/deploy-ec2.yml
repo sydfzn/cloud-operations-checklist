@@ -1,4 +1,3 @@
-```yaml
 name: Build and deploy to EC2
 
 on:
@@ -164,4 +163,3 @@ jobs:
         if: always()
         shell: bash
         run: rm -f ~/.ssh/deploy_key ~/.ssh/known_hosts
-```
