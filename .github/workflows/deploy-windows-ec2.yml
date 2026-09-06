@@ -1,0 +1,75 @@
+name: Build and deploy to Windows EC2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-windows-ec2
+  cancel-in-progress: true
+
+jobs:
+  validate-build-deploy:
+    runs-on: [self-hosted, windows, ec2]
+    environment: production
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        shell: pwsh
+        run: pnpm check
+
+      - name: Test
+        shell: pwsh
+        run: pnpm test
+
+      - name: Build
+        shell: pwsh
+        run: pnpm build
+
+      - name: Install release
+        shell: pwsh
+        env:
+          APP_ROOT: C:\Apps\CloudOperationsChecklist
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseId = $env:GITHUB_SHA
+          $releaseDir = Join-Path $env:APP_ROOT "releases\$releaseId"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          Copy-Item -Recurse -Force dist (Join-Path $releaseDir 'dist')
+          Copy-Item -Force package.json (Join-Path $releaseDir 'package.json')
+          Copy-Item -Force pnpm-lock.yaml (Join-Path $releaseDir 'pnpm-lock.yaml')
+          pnpm install --prod --frozen-lockfile --dir $releaseDir
+          $currentPath = Join-Path $env:APP_ROOT 'current'
+          if (Test-Path $currentPath) { Remove-Item -Force $currentPath }
+          New-Item -ItemType Junction -Path $currentPath -Target $releaseDir | Out-Null
+          Restart-Service -Name CloudOperationsChecklist
+          Get-Service -Name CloudOperationsChecklist
+
+      - name: Verify local health
+        shell: pwsh
+        run: |
+          $response = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:3000
+          if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 500) {
+            throw "Application health check failed with HTTP $($response.StatusCode)"
+          }

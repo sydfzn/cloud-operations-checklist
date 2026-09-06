@@ -1,0 +1,83 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1788297615662,
+      "tag": "0000_skinny_earthquake",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1788297739865,
+      "tag": "0001_woozy_longshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1788362761644,
+      "tag": "0002_motionless_the_anarchist",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1788363139407,
+      "tag": "0003_tired_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1788363292023,
+      "tag": "0004_conscious_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1788363475280,
+      "tag": "0005_useful_krista_starr",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1788363989451,
+      "tag": "0006_flimsy_mach_iv",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1788364628380,
+      "tag": "0007_unusual_jamie_braddock",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1788365329040,
+      "tag": "0008_productive_invisible_woman",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1788423337199,
+      "tag": "0009_clammy_ogun",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1788442333652,
+      "tag": "0010_reflective_mister_sinister",
+      "breakpoints": true
+    }
+  ]
+}

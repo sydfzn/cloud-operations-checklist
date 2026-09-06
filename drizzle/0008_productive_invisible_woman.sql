@@ -1,0 +1,1 @@
+ALTER TABLE `customerLeads` ADD `directoryUserMappingId` int;

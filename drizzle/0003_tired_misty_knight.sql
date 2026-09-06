@@ -1,0 +1,1 @@
+ALTER TABLE `checklistRuns` ADD `customerId` int NOT NULL;

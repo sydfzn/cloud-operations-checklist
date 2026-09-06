@@ -175,4 +175,10 @@
 - [x] Provide Windows SQL Server/SQL Server Express setup, bootstrap schema execution, and connection configuration.
 - [x] Provide Windows launch, health-check, update, backup, and rollback steps while keeping Entra deferred.
 
-- [ ] Create one complete path-preserving source ZIP containing Linux deployment files, Windows deployment files, application source, manifests, SQL schema, and documentation, excluding previews, dependencies, logs, build output, git metadata, and secrets.
+- [x] Create one complete path-preserving source ZIP containing Linux deployment files, Windows deployment files, application source, manifests, SQL schema, and documentation, excluding previews, dependencies, logs, build output, git metadata, and secrets.
+
+- [x] Fix the Linux GitHub Actions pnpm executable failure by installing pnpm before setup-node requests pnpm caching.
+- [x] Keep the Linux deployment workflow active and disable automatic execution of the Windows workflow.
+- [x] Add Linux deployment preflight validation for required source folders and required EC2 deployment secrets.
+
+- [ ] Repackage the complete source tree with the corrected Linux workflow and provide GitHub Codespaces steps that preserve every folder and hidden file.

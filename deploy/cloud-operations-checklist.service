@@ -1,0 +1,18 @@
+[Unit]
+Description=Cloud Operations Checklist
+After=network.target
+
+[Service]
+Type=simple
+User=cloudops
+Group=cloudops
+WorkingDirectory=/opt/cloud-operations-checklist/current
+EnvironmentFile=/etc/cloud-operations-checklist.env
+ExecStart=/usr/bin/node /opt/cloud-operations-checklist/current/dist/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
