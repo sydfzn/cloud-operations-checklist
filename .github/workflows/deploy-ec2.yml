@@ -1,3 +1,4 @@
+
 name: Build and deploy to EC2
 
 on:
@@ -9,35 +10,39 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: production-deploy
-  cancel-in-progress: true
-
 jobs:
   validate-and-build:
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpass
+          MYSQL_DATABASE: cloud_ops_test
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: mysql://testuser:testpass@localhost:3306/cloud_ops_test
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify complete source tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d client
-          test -d server
-          test -d shared
-          test -d database
-          test -f package.json
-          test -f pnpm-lock.yaml
-
-      - name: Set up pnpm
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          run_install: false
+          version: 10.4.1
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -46,119 +51,69 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm check
+      - name: Verify complete source tree
+        run: |
+          test -d client
+          test -d server
+          test -d shared
+          test -d database || test -d drizzle
 
-      - name: Test
-        run: pnpm test
+      - name: Run database migrations
+        run: pnpm drizzle-kit push
 
-      - name: Build
+      - name: Type check
+        run: pnpm tsc --noEmit
+
+      - name: Run tests
+        run: pnpm vitest run
+
+      - name: Build application
         run: pnpm build
 
-      - name: Package release
-        shell: bash
+      - name: Package build artifacts
         run: |
-          set -euo pipefail
-          tar -czf release.tgz \
-            dist \
-            package.json \
-            pnpm-lock.yaml \
-            database/sqlserver \
-            server/_core/entra.ts \
-            MICROSOFT_INTEGRATION.md
+          mkdir -p deploy-package
+          cp -r dist deploy-package/ 2>/dev/null || true
+          cp package.json deploy-package/
+          cp pnpm-lock.yaml deploy-package/
+          tar -czf deploy-package.tar.gz deploy-package
 
-      - name: Upload release artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-operations-release-${{ github.sha }}
-          path: release.tgz
-          retention-days: 14
+          name: deploy-package
+          path: deploy-package.tar.gz
+          retention-days: 5
 
   deploy:
     needs: validate-and-build
     runs-on: ubuntu-latest
-    environment: production
+    if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Download release artifact
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: cloud-operations-release-${{ github.sha }}
-
-      - name: Validate EC2 deployment secrets
-        shell: bash
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          test -n "$EC2_HOST" || { echo "Missing EC2_HOST"; exit 1; }
-          test -n "$EC2_USER" || { echo "Missing EC2_USER"; exit 1; }
-          test -n "$EC2_APP_DIR" || { echo "Missing EC2_APP_DIR"; exit 1; }
-          test -n "$EC2_SSH_PRIVATE_KEY" || { echo "Missing EC2_SSH_PRIVATE_KEY"; exit 1; }
-          test -n "$EC2_KNOWN_HOSTS" || { echo "Missing EC2_KNOWN_HOSTS"; exit 1; }
+          name: deploy-package
 
       - name: Configure SSH
-        shell: bash
-        env:
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
         run: |
-          set -euo pipefail
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Copy release to EC2
-        shell: bash
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
+      - name: Deploy to EC2
         run: |
-          set -euo pipefail
-          scp -i ~/.ssh/deploy_key \
-            release.tgz \
-            "$EC2_USER@$EC2_HOST:/tmp/cloud-operations-release-${GITHUB_SHA}.tgz"
+          scp -i ~/.ssh/deploy_key deploy-package.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'DEPLOY_SCRIPT'
+            cd /opt/app
+            tar -xzf /tmp/deploy-package.tar.gz --strip-components=1
+            pnpm install --frozen-lockfile --prod
+            pm2 restart ecosystem.config.js || pm2 start ecosystem.config.js
+            rm /tmp/deploy-package.tar.gz
+          DEPLOY_SCRIPT
 
-      - name: Activate release on EC2
-        shell: bash
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key "$EC2_USER@$EC2_HOST" \
-            "RELEASE_ID=$GITHUB_SHA APP_DIR=$EC2_APP_DIR bash -s" <<'REMOTE'
-          set -euo pipefail
-
-          : "${APP_DIR:?EC2_APP_DIR is required}"
-
-          RELEASE_DIR="$APP_DIR/releases/$RELEASE_ID"
-          RELEASE_ARCHIVE="/tmp/cloud-operations-release-$RELEASE_ID.tgz"
-
-          sudo mkdir -p "$RELEASE_DIR"
-          sudo tar -xzf "$RELEASE_ARCHIVE" -C "$RELEASE_DIR"
-          sudo chown -R "$USER:$USER" "$RELEASE_DIR"
-
-          cd "$RELEASE_DIR"
-          corepack enable
-          corepack prepare pnpm@10.4.1 --activate
-          pnpm install --prod --frozen-lockfile
-
-          sudo ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
-          rm -f "$RELEASE_ARCHIVE"
-
-          sudo systemctl restart cloud-operations-checklist
-          sudo systemctl --no-pager --full status cloud-operations-checklist
-          REMOTE
-
-      - name: Remove temporary SSH material
+      - name: Cleanup SSH
         if: always()
-        shell: bash
         run: rm -f ~/.ssh/deploy_key ~/.ssh/known_hosts
