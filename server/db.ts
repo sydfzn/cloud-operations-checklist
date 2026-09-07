@@ -1,3 +1,4 @@
+
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { adminSettings, checklistRunItems, checklistRuns, customerAccounts, customerChecklistAssignments, customerLeads, customers, directoryUserMappings, escalations, InsertUser, lifecycleControlMetadata, reportPublications, reportRecipients, reviewApprovals, users } from "../drizzle/schema";
@@ -21,16 +22,22 @@ export async function getDb() {
   return _db;
 }
 
+/**
+ * Returns the database instance or throws if unavailable.
+ * Use this in any function that MUST have a database to operate correctly.
+ */
+async function requireDb() {
+  const db = await getDb();
+  if (!db) throw new Error("database-unavailable");
+  return db;
+}
+
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");
   }
 
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
-  }
+  const db = await requireDb();
 
   try {
     const values: InsertUser = {
@@ -94,15 +101,13 @@ export async function getUserByOpenId(openId: string) {
 
 export async function assertCustomerWorkspaceAccess(userId: number, customerId: number, role: "user" | "admin" | AppRole, email?: string | null) {
   if (role === "admin") return;
-  const db = await getDb();
-  if (!db) throw new Error("database-unavailable");
+  const db = await requireDb();
   const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1)));
   if (!isAssignedLead(leads, userId, email)) throw new Error("You are not assigned to this customer workspace");
 }
 
 export async function getChecklistRun(userId: number, customerId: number, checklistId: string, runDate: string, role: "user" | "admin" | AppRole = "user", email?: string | null) {
-  const db = await getDb();
-  if (!db) return { run: undefined, items: [] };
+  const db = await requireDb();
   if (role !== "admin") {
     const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1)));
     if (!isAssignedLead(leads, userId, email)) throw new Error("You are not assigned to this customer workspace");
@@ -114,8 +119,7 @@ export async function getChecklistRun(userId: number, customerId: number, checkl
 }
 
 export async function getCustomers() {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   const rows = await db.select().from(customers).orderBy(desc(customers.name));
   return Promise.all(rows.map(async (customer) => ({
     ...customer,
@@ -138,8 +142,7 @@ async function resolveMappedLeadRows(db: any, customerId: number, leads: Array<{
 }
 
 export async function createCustomer(input: { name: string; code: string; primaryContactName?: string | null; primaryContactEmail?: string | null; account?: { provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }; accounts?: Array<{ provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }>; lead?: { directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }; leads?: Array<{ directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }>; recipients?: Array<{ name?: string | null; email: string }>; assignments?: string[] }) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   const requestedLeads = input.leads ?? (input.lead ? [input.lead] : []);
   await resolveMappedLeadRows(db, 0, requestedLeads);
   const inserted = await db.insert(customers).values({ name: input.name, code: input.code, primaryContactName: input.primaryContactName ?? null, primaryContactEmail: input.primaryContactEmail ?? null }).$returningId();
@@ -162,8 +165,7 @@ export async function getAssignedCustomers(userId: number, email?: string | null
 }
 
 export async function updateCustomerSetup(customerId: number, input: { name: string; code: string; primaryContactName?: string | null; primaryContactEmail?: string | null; account?: { provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }; accounts?: Array<{ provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }>; lead?: { directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }; leads?: Array<{ directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }>; recipients?: Array<{ name?: string | null; email: string }>; assignments?: string[] }) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   const requestedLeads = input.leads ?? (input.lead ? [input.lead] : []);
   await resolveMappedLeadRows(db, 0, requestedLeads);
   await db.update(customers).set({ name: input.name, code: input.code, primaryContactName: input.primaryContactName ?? null, primaryContactEmail: input.primaryContactEmail ?? null }).where(eq(customers.id, customerId));
@@ -182,39 +184,33 @@ export async function updateCustomerSetup(customerId: number, input: { name: str
 }
 
 export async function archiveCustomer(customerId: number) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   await db.update(customers).set({ status: "archived" }).where(eq(customers.id, customerId));
   return getCustomers();
 }
 
 export async function getCustomerAccounts(customerId: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(customerAccounts).where(eq(customerAccounts.customerId, customerId)).orderBy(desc(customerAccounts.createdAt));
 }
 
 export async function getCustomerLeads(customerId: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1))).orderBy(desc(customerLeads.createdAt));
 }
 
 export async function getCustomerAssignments(customerId: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(customerChecklistAssignments).where(and(eq(customerChecklistAssignments.customerId, customerId), eq(customerChecklistAssignments.enabled, 1))).orderBy(desc(customerChecklistAssignments.createdAt));
 }
 
 export async function getReportRecipients(customerId: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(reportRecipients).where(and(eq(reportRecipients.customerId, customerId), eq(reportRecipients.active, 1))).orderBy(desc(reportRecipients.createdAt));
 }
 
 export async function getPublicationHistory(customerId: number, userId?: number, role: "user" | "admin" | AppRole = "admin", email?: string | null) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   if (userId && role !== "admin") {
     const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1)));
     if (!isAssignedLead(leads, userId, email)) throw new Error("You are not assigned to this customer workspace");
@@ -223,35 +219,30 @@ export async function getPublicationHistory(customerId: number, userId?: number,
 }
 
 export async function getDirectoryUserMappings() {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(directoryUserMappings).where(eq(directoryUserMappings.active, 1)).orderBy(desc(directoryUserMappings.displayName));
 }
 
 export async function saveDirectoryUserMapping(input: { directoryEmail: string; displayName: string; role: "operator" | "lead" | "admin" }) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   await db.insert(directoryUserMappings).values({ directoryEmail: input.directoryEmail, displayName: input.displayName, role: input.role, active: 1 }).onDuplicateKeyUpdate({ set: { displayName: input.displayName, role: input.role, active: 1, updatedAt: new Date() } });
   return getDirectoryUserMappings();
 }
 
 export async function archiveDirectoryUserMapping(id: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   await db.update(directoryUserMappings).set({ active: 0 }).where(eq(directoryUserMappings.id, id));
   return getDirectoryUserMappings();
 }
 
 export async function getAdminSettings() {
-  const db = await getDb();
-  if (!db) return {};
+  const db = await requireDb();
   const rows = await db.select().from(adminSettings).orderBy(desc(adminSettings.updatedAt));
   return Object.fromEntries(rows.map((row) => [row.settingKey, row.settingValue ?? ""]));
 }
 
 export async function saveAdminSettings(userId: number, values: Record<string, string | null>) {
-  const db = await getDb();
-  if (!db) return {};
+  const db = await requireDb();
   for (const [settingKey, settingValue] of Object.entries(values)) {
     const existing = await db.select({ id: adminSettings.id }).from(adminSettings).where(eq(adminSettings.settingKey, settingKey)).limit(1);
     if (existing[0]) await db.update(adminSettings).set({ settingValue, updatedByUserId: userId }).where(eq(adminSettings.id, existing[0].id));
@@ -261,8 +252,7 @@ export async function saveAdminSettings(userId: number, values: Record<string, s
 }
 
 export async function getReviewStatus(customerId: number, checklistId: string, runDate: string, userId?: number, role: "user" | "admin" | AppRole = "admin", email?: string | null) {
-  const db = await getDb();
-  if (!db) return { approval: undefined, publication: undefined };
+  const db = await requireDb();
   if (userId && role !== "admin") {
     const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1)));
     if (!isAssignedLead(leads, userId, email)) throw new Error("You are not assigned to this customer workspace");
@@ -273,8 +263,7 @@ export async function getReviewStatus(customerId: number, checklistId: string, r
 }
 
 export async function approveReview(userId: number, email: string | null | undefined, input: { customerId: number; checklistId: string; runDate: string; notes?: string | null }) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, input.customerId), eq(customerLeads.active, 1)));
   if (!isAssignedLead(leads, userId, email)) throw new Error("Only an assigned customer operations lead can approve this review");
   await db.insert(reviewApprovals).values({ customerId: input.customerId, checklistId: input.checklistId, runDate: input.runDate, leadUserId: userId, status: "approved", notes: input.notes ?? null, approvedAt: new Date() });
@@ -282,8 +271,7 @@ export async function approveReview(userId: number, email: string | null | undef
 }
 
 export async function publishApprovedReport(userId: number, email: string | null | undefined, role: "user" | "admin" | AppRole, input: { customerId: number; checklistId: string; runDate: string }) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   if (role !== "admin") {
     const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, input.customerId), eq(customerLeads.active, 1)));
     if (!isAssignedLead(leads, userId, email)) throw new Error("Only an assigned customer operations lead can publish this report");
@@ -300,28 +288,24 @@ export async function publishApprovedReport(userId: number, email: string | null
 }
 
 export async function getEscalations(userId: number) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(escalations).where(eq(escalations.userId, userId)).orderBy(desc(escalations.createdAt));
 }
 
 export async function createEscalation(userId: number, input: { owner: string; action: string; priority: "P1/P2" | "P3" | "Advisory"; dueAt?: string | null }) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   const result = await db.insert(escalations).values({ userId, owner: input.owner, action: input.action, priority: input.priority, dueAt: input.dueAt ?? null });
   return result;
 }
 
 export async function closeEscalation(userId: number, escalationId: number) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   await db.update(escalations).set({ status: "closed" }).where(and(eq(escalations.id, escalationId), eq(escalations.userId, userId)));
   return getEscalations(userId);
 }
 
 export async function saveChecklistItem(userId: number, customerId: number, checklistId: string, runDate: string, itemId: string, status: "open" | "done" | "blocked", remarks?: string | null, role: "user" | "admin" | AppRole = "user", email?: string | null) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const db = await requireDb();
   if (role !== "admin") {
     const leads = await db.select().from(customerLeads).where(and(eq(customerLeads.customerId, customerId), eq(customerLeads.active, 1)));
     if (!isAssignedLead(leads, userId, email)) throw new Error("You are not assigned to this customer workspace");
@@ -338,14 +322,12 @@ export async function saveChecklistItem(userId: number, customerId: number, chec
 }
 
 export async function listLifecycleMetadata(customerId: number, checklistId: string) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   return db.select().from(lifecycleControlMetadata).where(and(eq(lifecycleControlMetadata.customerId, customerId), eq(lifecycleControlMetadata.checklistId, checklistId)));
 }
 
 export async function replaceLifecycleMetadata(customerId: number, checklistId: string, entries: Array<{ itemId: string; dueDate?: string | null; ownerMappingId?: number | null; ownerName?: string | null; ownerEmail?: string | null }>) {
-  const db = await getDb();
-  if (!db) throw new Error("database-unavailable");
+  const db = await requireDb();
   await db.delete(lifecycleControlMetadata).where(and(eq(lifecycleControlMetadata.customerId, customerId), eq(lifecycleControlMetadata.checklistId, checklistId)));
   if (!entries.length) return [];
   await db.insert(lifecycleControlMetadata).values(entries.map((entry) => ({ customerId, checklistId, itemId: entry.itemId, dueDate: entry.dueDate || null, ownerMappingId: entry.ownerMappingId ?? null, ownerName: entry.ownerName || null, ownerEmail: entry.ownerEmail || null })));
@@ -353,8 +335,7 @@ export async function replaceLifecycleMetadata(customerId: number, checklistId: 
 }
 
 export async function listIncompleteLifecycleMetadata(asOf = new Date().toISOString().slice(0, 10)) {
-  const db = await getDb();
-  if (!db) return [];
+  const db = await requireDb();
   const dueEntries = await db.select().from(lifecycleControlMetadata);
   const candidates = [];
   for (const entry of dueEntries) {
@@ -365,3 +346,4 @@ export async function listIncompleteLifecycleMetadata(asOf = new Date().toISOStr
   }
   return candidates;
 }
+
