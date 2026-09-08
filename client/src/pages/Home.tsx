@@ -34,6 +34,7 @@ import { trpc } from "@/lib/trpc";
  type Status = "open" | "done" | "blocked";
  type StatusMap = Record<string, Status>;
  type RemarksMap = Record<string, string>;
+ type AssignedCustomer = { id: number; name: string; code: string; leads: Array<{ directoryEmail?: string | null; userId?: number }>; assignments: Array<{ checklistId: string }>; [key: string]: unknown };
 
 const statusMeta: Record<Status, { label: string; className: string }> = {
   open: { label: "Open", className: "bg-slate-100 text-slate-600" },
@@ -57,7 +58,7 @@ function formatDate() {
 export default function Home() {
   const [, setLocation] = useLocation();
   const assignedCustomersQuery = trpc.checklist.workspaceCustomers.useQuery();
-  const assignedCustomers = assignedCustomersQuery.data ?? [];
+  const assignedCustomers = (assignedCustomersQuery.data ?? []) as AssignedCustomer[];
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [activeCadence, setActiveCadence] = useState<Cadence>("Daily");
   const cadenceLists = useMemo(() => cadenceOrder.map((cadence) => ({ cadence, items: checklistDefinitions.filter((item) => item.cadence === cadence) })), []);
@@ -72,7 +73,7 @@ export default function Home() {
   const [showEscalation, setShowEscalation] = useState(false);
   const [escalation, setEscalation] = useState({ owner: "", action: "", priority: "P1/P2", due: "" });
   const [savedToast, setSavedToast] = useState(false);
-  const selectedCustomer = assignedCustomers.find((customer) => customer.id === customerId) ?? null;
+  const selectedCustomer = assignedCustomers.find((customer: AssignedCustomer) => customer.id === customerId) ?? null;
   const runDate = new Date().toISOString().slice(0, 10);
   const runQuery = trpc.checklist.loadRun.useQuery({ customerId: customerId ?? 0, checklistId: selectedId, runDate }, { enabled: Boolean(customerId && selectedId) });
   const saveItemMutation = trpc.checklist.saveItem.useMutation();
@@ -148,7 +149,7 @@ export default function Home() {
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#36c5a0] text-[#0d1b2a]"><Cloud className="h-5 w-5" /></div>
           <div><p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#8ea3b5]">Ops cockpit</p><p className="mt-0.5 text-sm font-semibold tracking-tight">Northstar Cloud</p></div>
         </div>
-        <div className="mb-6 px-2"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6e8496]">Workspace</p><div className="relative mt-2"><select value={customerId ?? ""} onChange={(event) => setCustomerId(Number(event.target.value))} className="h-10 w-full appearance-none rounded-lg border border-white/10 bg-white/[0.06] px-3 pr-8 text-left text-sm text-slate-200 outline-none focus:border-[#36c5a0]" aria-label="Select customer workspace"><option value="">{assignedCustomersQuery.isLoading ? "Loading customers…" : "Select customer"}</option>{assignedCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · {customer.code}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /></div></div>
+        <div className="mb-6 px-2"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6e8496]">Workspace</p><div className="relative mt-2"><select value={customerId ?? ""} onChange={(event) => setCustomerId(Number(event.target.value))} className="h-10 w-full appearance-none rounded-lg border border-white/10 bg-white/[0.06] px-3 pr-8 text-left text-sm text-slate-200 outline-none focus:border-[#36c5a0]" aria-label="Select customer workspace"><option value="">{assignedCustomersQuery.isLoading ? "Loading customers…" : "Select customer"}</option>{assignedCustomers.map((customer: AssignedCustomer) => <option key={customer.id} value={customer.id}>{customer.name} · {customer.code}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /></div></div>
         <nav className="space-y-1"><NavItem icon={<LayoutDashboard />} label="Overview" active /><NavItem icon={<ClipboardCheck />} label="Checklists" /><NavItem icon={<BarChart3 />} label="Analytics" onClick={() => setLocation("/analytics")} /><NavItem icon={<ClipboardCheck />} label="Sales-to-Delivery KYC" onClick={() => setLocation("/lifecycle?section=kyc")} /><NavItem icon={<ClipboardCheck />} label="Service Transition" onClick={() => setLocation("/lifecycle?section=transition")} /><NavItem icon={<ClipboardCheck />} label="Managed Services Onboarding" onClick={() => setLocation("/lifecycle?section=onboarding")} /><NavItem icon={<ClipboardCheck />} label="Operational Readiness" onClick={() => setLocation("/lifecycle?section=operational_readiness")} /><NavItem icon={<Building2 />} label="Customers" onClick={() => setLocation("/customers")} /><NavItem icon={<UserCheck />} label="Lead review" onClick={() => setLocation("/lead-review")} /><NavItem icon={<Bell />} label="Escalations" badge="3" /><NavItem icon={<ShieldCheck />} label="Compliance" /><NavItem icon={<FileText />} label="Artifacts" /></nav>
         <div className="mt-8 px-2"><p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6e8496]">Review cadence</p><div className="space-y-1">{cadenceOrder.slice(0, 5).map((cadence) => <button key={cadence} onClick={() => chooseCadence(cadence)} className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeCadence === cadence ? "bg-[#36c5a0]/15 font-medium text-[#6fe1be]" : "text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"}`}><span>{cadence}</span><span className="text-xs text-slate-500">{checklistDefinitions.filter((definition) => definition.cadence === cadence).length}</span></button>)}</div></div>
         <div className="mt-auto rounded-xl border border-white/10 bg-white/[0.05] p-3"><div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-[#6fe1be]" /><p className="text-xs font-medium text-slate-200">Ops pulse</p></div><p className="mt-2 text-xs leading-5 text-slate-400">Keep your daily health pass tight. Escalate early, document once.</p></div>
