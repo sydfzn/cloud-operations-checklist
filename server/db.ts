@@ -1,36 +1,29 @@
 
 import { and, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-mssql";
-import sql from "mssql";
+import { drizzle } from "drizzle-orm/mysql2";
 import { adminSettings, checklistRunItems, checklistRuns, customerAccounts, customerChecklistAssignments, customerLeads, customers, directoryUserMappings, escalations, InsertUser, lifecycleControlMetadata, reportPublications, reportRecipients, reviewApprovals, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { isAssignedLead, publicationEligibility } from "@shared/governance";
 import type { AppRole } from "@shared/rbac";
 import { isLifecycleReminderEligible } from "@shared/lifecycleReminders";
 
-let _db: ReturnType<typeof drizzle> | null = null;
-let _pool: sql.ConnectionPool | null = null;
+// Infer the customer row type from the schema
+type CustomerRow = typeof customers.$inferSelect;
 
-// Lazily create the MSSQL pool and drizzle instance.
+let _db: ReturnType<typeof drizzle> | null = null;
+
 export async function getDb() {
-  if (!_db && process.env.MSSQL_CONNECTION_STRING) {
+  if (!_db && process.env.DATABASE_URL) {
     try {
-      _pool = new sql.ConnectionPool(process.env.MSSQL_CONNECTION_STRING);
-      await _pool.connect();
-      _db = drizzle({ client: _pool });
+      _db = drizzle(process.env.DATABASE_URL);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
-      _pool = null;
     }
   }
   return _db;
 }
 
-/**
- * Returns the database instance or throws if unavailable.
- * Use this in any function that MUST have a database to operate correctly.
- */
 async function requireDb() {
   const db = await getDb();
   if (!db) throw new Error("database-unavailable");
@@ -63,7 +56,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       const values: InsertUser = { openId: user.openId };
       for (const field of textFields) {
         const value = user[field];
-        if (value !== undefined) (values as any)[field] = value ?? null;
+        if (value !== undefined) (values as Record<string, unknown>)[field] = value ?? null;
       }
       if (user.lastSignedIn !== undefined) values.lastSignedIn = user.lastSignedIn;
       if (!values.lastSignedIn) values.lastSignedIn = new Date();
@@ -114,7 +107,7 @@ export async function getChecklistRun(userId: number, customerId: number, checkl
 export async function getCustomers() {
   const db = await requireDb();
   const rows = await db.select().from(customers).orderBy(desc(customers.name));
-  return Promise.all(rows.map(async (customer) => ({
+  return Promise.all(rows.map(async (customer: CustomerRow) => ({
     ...customer,
     accounts: await getCustomerAccounts(customer.id),
     leads: await getCustomerLeads(customer.id),
@@ -123,7 +116,7 @@ export async function getCustomers() {
   })));
 }
 
-async function resolveMappedLeadRows(db: any, customerId: number, leads: Array<{ directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }>) {
+async function resolveMappedLeadRows(db: ReturnType<typeof drizzle>, customerId: number, leads: Array<{ directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }>) {
   const rows = [];
   for (const lead of leads) {
     if (!lead.directoryUserMappingId) throw new Error("directory-user-mapping-required");
@@ -154,7 +147,7 @@ export async function createCustomer(input: { name: string; code: string; primar
 export async function getAssignedCustomers(userId: number, email?: string | null) {
   const all = await getCustomers();
   const normalizedEmail = email?.toLowerCase() ?? "";
-  return all.filter((customer) => customer.leads.some((lead) => lead.directoryEmail?.toLowerCase() === normalizedEmail || lead.userId === userId));
+  return all.filter((customer: Awaited<ReturnType<typeof getCustomers>>[number]) => customer.leads.some((lead) => lead.directoryEmail?.toLowerCase() === normalizedEmail || lead.userId === userId));
 }
 
 export async function updateCustomerSetup(customerId: number, input: { name: string; code: string; primaryContactName?: string | null; primaryContactEmail?: string | null; account?: { provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }; accounts?: Array<{ provider: string; accountName: string; accountIdentifier?: string | null; serviceScope?: string | null; environment?: string | null; region?: string | null; criticality?: "critical" | "high" | "standard" }>; lead?: { directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }; leads?: Array<{ directoryUserMappingId?: number | null; displayName?: string | null; directoryEmail?: string | null; role?: "primary" | "backup" }>; recipients?: Array<{ name?: string | null; email: string }>; assignments?: string[] }) {
