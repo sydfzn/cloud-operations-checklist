@@ -14,24 +14,10 @@ jobs:
   validate-and-build:
     runs-on: ubuntu-latest
 
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: testpass
-          MYSQL_DATABASE: cloud_ops_test
-          MYSQL_USER: testuser
-          MYSQL_PASSWORD: testpass
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
     env:
-      DATABASE_URL: mysql://testuser:testpass@localhost:3306/cloud_ops_test
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      MSSQL_CONNECTION_STRING: ${{ secrets.MSSQL_CONNECTION_STRING }}
+      DB_PROVIDER: mssql
 
     steps:
       - name: Checkout repository
@@ -117,3 +103,4 @@ jobs:
       - name: Cleanup SSH
         if: always()
         run: rm -f ~/.ssh/deploy_key ~/.ssh/known_hosts
+
