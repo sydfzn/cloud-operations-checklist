@@ -1,4 +1,3 @@
-
 name: Build and deploy to EC2
 
 on:
@@ -54,9 +53,6 @@ jobs:
           else
             echo "✅ MSSQL_CONNECTION_STRING is set (length: ${#MSSQL_CONNECTION_STRING})"
           fi
-
-      - name: Run database migrations
-        run: pnpm drizzle-kit push
 
       - name: Type check
         run: pnpm tsc --noEmit
