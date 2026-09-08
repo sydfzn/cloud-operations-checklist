@@ -1,3 +1,4 @@
+
 name: Build and deploy to EC2
 
 on:
@@ -41,6 +42,19 @@ jobs:
           test -d shared
           test -d database || test -d drizzle
 
+      - name: Debug env check
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL is NOT set"
+          else
+            echo "✅ DATABASE_URL is set (length: ${#DATABASE_URL})"
+          fi
+          if [ -z "$MSSQL_CONNECTION_STRING" ]; then
+            echo "❌ MSSQL_CONNECTION_STRING is NOT set"
+          else
+            echo "✅ MSSQL_CONNECTION_STRING is set (length: ${#MSSQL_CONNECTION_STRING})"
+          fi
+
       - name: Run database migrations
         run: pnpm drizzle-kit push
 
@@ -82,7 +96,7 @@ jobs:
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
@@ -90,7 +104,7 @@ jobs:
         run: |
           scp -i ~/.ssh/deploy_key deploy-package.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/
           ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'DEPLOY_SCRIPT'
-            cd /opt/app
+            cd ${{ secrets.EC2_APP_DIR }}
             tar -xzf /tmp/deploy-package.tar.gz --strip-components=1
             pnpm install --frozen-lockfile --prod
             pm2 restart ecosystem.config.js || pm2 start ecosystem.config.js
