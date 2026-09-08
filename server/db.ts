@@ -1,6 +1,7 @@
 
 import { and, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/node-mssql";
+import sql from "mssql";
 import { adminSettings, checklistRunItems, checklistRuns, customerAccounts, customerChecklistAssignments, customerLeads, customers, directoryUserMappings, escalations, InsertUser, lifecycleControlMetadata, reportPublications, reportRecipients, reviewApprovals, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { isAssignedLead, publicationEligibility } from "@shared/governance";
@@ -8,15 +9,19 @@ import type { AppRole } from "@shared/rbac";
 import { isLifecycleReminderEligible } from "@shared/lifecycleReminders";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: sql.ConnectionPool | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
+// Lazily create the MSSQL pool and drizzle instance.
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  if (!_db && process.env.MSSQL_CONNECTION_STRING) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _pool = new sql.ConnectionPool(process.env.MSSQL_CONNECTION_STRING);
+      await _pool.connect();
+      _db = drizzle({ client: _pool });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _pool = null;
     }
   }
   return _db;
@@ -40,47 +45,35 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   const db = await requireDb();
 
   try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
+    const existing = await db.select().from(users).where(eq(users.openId, user.openId)).limit(1);
 
     const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
 
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
+    if (existing[0]) {
+      const updateSet: Record<string, unknown> = {};
+      for (const field of textFields) {
+        const value = user[field];
+        if (value !== undefined) updateSet[field] = value ?? null;
+      }
+      if (user.lastSignedIn !== undefined) updateSet.lastSignedIn = user.lastSignedIn;
+      if (user.role !== undefined) updateSet.role = user.role;
+      if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+      await db.update(users).set(updateSet).where(eq(users.openId, user.openId));
+    } else {
+      const values: InsertUser = { openId: user.openId };
+      for (const field of textFields) {
+        const value = user[field];
+        if (value !== undefined) (values as any)[field] = value ?? null;
+      }
+      if (user.lastSignedIn !== undefined) values.lastSignedIn = user.lastSignedIn;
+      if (!values.lastSignedIn) values.lastSignedIn = new Date();
+      if (user.role !== undefined) {
+        values.role = user.role;
+      } else if (user.openId === ENV.ownerOpenId) {
+        values.role = 'admin';
+      }
+      await db.insert(users).values(values);
     }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
   } catch (error) {
     console.error("[Database] Failed to upsert user:", error);
     throw error;
@@ -225,7 +218,12 @@ export async function getDirectoryUserMappings() {
 
 export async function saveDirectoryUserMapping(input: { directoryEmail: string; displayName: string; role: "operator" | "lead" | "admin" }) {
   const db = await requireDb();
-  await db.insert(directoryUserMappings).values({ directoryEmail: input.directoryEmail, displayName: input.displayName, role: input.role, active: 1 }).onDuplicateKeyUpdate({ set: { displayName: input.displayName, role: input.role, active: 1, updatedAt: new Date() } });
+  const existing = await db.select().from(directoryUserMappings).where(eq(directoryUserMappings.directoryEmail, input.directoryEmail)).limit(1);
+  if (existing[0]) {
+    await db.update(directoryUserMappings).set({ displayName: input.displayName, role: input.role, active: 1, updatedAt: new Date() }).where(eq(directoryUserMappings.id, existing[0].id));
+  } else {
+    await db.insert(directoryUserMappings).values({ directoryEmail: input.directoryEmail, displayName: input.displayName, role: input.role, active: 1 });
+  }
   return getDirectoryUserMappings();
 }
 
