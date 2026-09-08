@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 
 type DirectoryRole = "operator" | "lead" | "admin";
+type DirectoryMapping = { id: number; directoryEmail: string; displayName: string; role: string };
 
 export default function Settings() {
   const [, setLocation] = useLocation();
